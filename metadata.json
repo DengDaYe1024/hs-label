@@ -1,0 +1,5 @@
+{
+  "name": "React LabelMe AI",
+  "description": "A professional image annotation tool inspired by LabelMe, featuring polygon/rectangle tools and AI-assisted object detection using Gemini Flash.",
+  "requestFramePermissions": []
+}
