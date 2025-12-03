@@ -1,6 +1,7 @@
 import React from 'react';
-import { MousePointer, Hand, Square, PenTool, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
-import { ToolType } from '../types';
+import { MousePointer, Hand, Square, PenTool, ZoomIn, ZoomOut, RotateCcw, Undo2, Redo2, Settings } from 'lucide-react';
+import { ToolType, KeyMap } from '../types';
+import { formatShortcut } from '../utils/keyboard';
 
 interface ToolbarProps {
   currentTool: ToolType;
@@ -9,6 +10,12 @@ interface ToolbarProps {
   onZoomIn: () => void;
   onZoomOut: () => void;
   onResetView: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  keyMap: KeyMap;
+  onOpenSettings: () => void;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
@@ -18,12 +25,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onZoomIn,
   onZoomOut,
   onResetView,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
+  keyMap,
+  onOpenSettings
 }) => {
   const tools = [
-    { id: 'select', icon: MousePointer, label: 'Select (V)' },
-    { id: 'pan', icon: Hand, label: 'Pan (H)' },
-    { id: 'rectangle', icon: Square, label: 'Rectangle (R)' },
-    { id: 'polygon', icon: PenTool, label: 'Polygon (P)' },
+    { id: 'select', icon: MousePointer, label: `选择 (${formatShortcut(keyMap.TOOL_SELECT)})` },
+    { id: 'pan', icon: Hand, label: `拖拽移动 (${formatShortcut(keyMap.TOOL_PAN)})` },
+    { id: 'rectangle', icon: Square, label: `矩形工具 (${formatShortcut(keyMap.TOOL_RECTANGLE)})` },
+    { id: 'polygon', icon: PenTool, label: `多边形工具 (${formatShortcut(keyMap.TOOL_POLYGON)})` },
   ] as const;
 
   return (
@@ -46,11 +59,41 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       </div>
 
       <div className="h-px w-8 bg-gray-700 my-2" />
+      
+      {/* Undo/Redo */}
+      <div className="space-y-2 w-full px-2">
+        <button
+          onClick={onUndo}
+          disabled={!canUndo}
+          title={`撤销 (${formatShortcut(keyMap.UNDO)})`}
+          className={`w-full aspect-square flex items-center justify-center rounded-lg transition-colors ${
+            canUndo
+              ? 'text-gray-400 hover:bg-gray-800 hover:text-white'
+              : 'text-gray-700 cursor-not-allowed'
+          }`}
+        >
+          <Undo2 size={20} />
+        </button>
+        <button
+          onClick={onRedo}
+          disabled={!canRedo}
+          title={`重做 (${formatShortcut(keyMap.REDO)})`}
+          className={`w-full aspect-square flex items-center justify-center rounded-lg transition-colors ${
+            canRedo
+              ? 'text-gray-400 hover:bg-gray-800 hover:text-white'
+              : 'text-gray-700 cursor-not-allowed'
+          }`}
+        >
+          <Redo2 size={20} />
+        </button>
+      </div>
+
+      <div className="h-px w-8 bg-gray-700 my-2" />
 
       <div className="space-y-2 w-full px-2 flex flex-col items-center">
         <button
           onClick={onZoomIn}
-          title="Zoom In (+)"
+          title={`放大 (${formatShortcut(keyMap.ZOOM_IN)})`}
           className="w-full aspect-square flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
         >
           <ZoomIn size={20} />
@@ -62,18 +105,28 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
         <button
           onClick={onZoomOut}
-          title="Zoom Out (-)"
+          title={`缩小 (${formatShortcut(keyMap.ZOOM_OUT)})`}
           className="w-full aspect-square flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
         >
           <ZoomOut size={20} />
         </button>
         <button
           onClick={onResetView}
-          title="Reset View (0)"
+          title={`重置视图 (${formatShortcut(keyMap.RESET_VIEW)})`}
           className="w-full aspect-square flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-800 hover:text-white transition-colors"
         >
           <RotateCcw size={20} />
         </button>
+      </div>
+
+      <div className="mt-auto pb-2">
+        <button
+            onClick={onOpenSettings}
+            title="设置"
+            className="w-full aspect-square flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-800 hover:text-blue-400 transition-colors"
+          >
+            <Settings size={20} />
+          </button>
       </div>
     </div>
   );

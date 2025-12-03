@@ -34,3 +34,33 @@ export interface ViewTransform {
   x: number;
   y: number;
 }
+
+// --- Keyboard Shortcuts ---
+
+export interface KeyBinding {
+  key: string;
+  ctrlKey?: boolean;
+  shiftKey?: boolean;
+  altKey?: boolean;
+  metaKey?: boolean; // Command on Mac
+}
+
+export type ActionId = 
+  | 'TOOL_SELECT' 
+  | 'TOOL_PAN' 
+  | 'TOOL_RECTANGLE' 
+  | 'TOOL_POLYGON' 
+  | 'ZOOM_IN' 
+  | 'ZOOM_OUT' 
+  | 'RESET_VIEW' 
+  | 'UNDO' 
+  | 'REDO' 
+  | 'DELETE' 
+  | 'CANCEL' 
+  | 'BACKSPACE_POINT'
+  | 'NUDGE_LEFT'
+  | 'NUDGE_RIGHT'
+  | 'NUDGE_UP'
+  | 'NUDGE_DOWN';
+
+export type KeyMap = Record<ActionId, KeyBinding>;

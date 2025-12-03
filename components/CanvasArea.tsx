@@ -1,7 +1,8 @@
 import React, { useRef, useEffect, useState, CSSProperties } from 'react';
-import { Annotation, Point, ToolType, ViewTransform, ImageSize } from '../types';
-import { screenToImage, isPointNearVertex, getDistanceToSegment } from '../utils/geometry';
-import { X, RotateCcw, Move, ArrowLeft, MousePointer2 } from 'lucide-react';
+import { Annotation, Point, ToolType, ViewTransform, ImageSize, KeyMap } from '../types';
+import { screenToImage, isPointNearVertex, getDistanceToSegment, imageToScreen } from '../utils/geometry';
+import { getLabelName } from '../constants';
+import { isShortcutPressed } from '../utils/keyboard';
 
 interface CanvasAreaProps {
   imageSrc: string;
@@ -16,6 +17,9 @@ interface CanvasAreaProps {
   currentColor: string;
   fillOpacity: number;
   showCrosshairs: boolean;
+  onShapeComplete: (id: string, screenPos: Point) => void;
+  onSnapshot: () => void;
+  keyMap: KeyMap;
 }
 
 export const CanvasArea: React.FC<CanvasAreaProps> = ({
@@ -31,6 +35,9 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
   currentColor,
   fillOpacity,
   showCrosshairs,
+  onShapeComplete,
+  onSnapshot,
+  keyMap
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   
@@ -40,6 +47,8 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
   const [currentMouseImagePos, setCurrentMouseImagePos] = useState<Point | null>(null);
   const [isHoveringStartPoint, setIsHoveringStartPoint] = useState(false);
   const [hoveredEdge, setHoveredEdge] = useState<{ id: string, index: number, point: Point } | null>(null);
+  const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<Point | null>(null);
   
   // Drawing states
   const [pendingPoly, setPendingPoly] = useState<Point[]>([]);
@@ -105,37 +114,45 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
     return () => el.removeEventListener('wheel', onWheel);
   }, [transform, onTransformChange]);
 
-  // --- Keyboard Shortcuts (Spacebar, Esc, Backspace) ---
+  // --- Keyboard Shortcuts (Spacebar, Esc, Backspace, Nudge) ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).tagName === 'INPUT') return;
 
+      // Special handling for spacebar as it is often held down
       if (e.code === 'Space' && !e.repeat) {
         setIsSpacePressed(true);
       }
 
       // Drawing Shortcuts
       if (pendingPoly.length > 0) {
-        if (e.key === 'Escape') handleCancelDraw();
-        if (e.key === 'Backspace') handleUndoPoint();
+        if (isShortcutPressed(e, keyMap.CANCEL)) handleCancelDraw();
+        if (isShortcutPressed(e, keyMap.BACKSPACE_POINT)) handleUndoPoint();
         return;
       }
       if (pendingRectStart) {
-        if (e.key === 'Escape') handleCancelDraw();
+        if (isShortcutPressed(e, keyMap.CANCEL)) handleCancelDraw();
         return;
       }
 
       // Nudge Selected Shape
       if (selectedId && !activeVertex) {
-        const step = e.shiftKey ? 10 : 1;
         let dx = 0, dy = 0;
-        if (e.key === 'ArrowLeft') dx = -step;
-        if (e.key === 'ArrowRight') dx = step;
-        if (e.key === 'ArrowUp') dy = -step;
-        if (e.key === 'ArrowDown') dy = step;
+        
+        if (isShortcutPressed(e, keyMap.NUDGE_LEFT)) dx = -1;
+        else if (isShortcutPressed(e, keyMap.NUDGE_RIGHT)) dx = 1;
+        else if (isShortcutPressed(e, keyMap.NUDGE_UP)) dy = -1;
+        else if (isShortcutPressed(e, keyMap.NUDGE_DOWN)) dy = 1;
 
         if (dx !== 0 || dy !== 0) {
           e.preventDefault();
+          
+          // Multiply by 10 if Shift is held (hardcoded accelerator, or could be configurable)
+          const step = e.shiftKey ? 10 : 1;
+          dx *= step;
+          dy *= step;
+
+          onSnapshot(); // Snapshot before nudge
           onAnnotationsChange(annotations.map(ann => {
             if (ann.id !== selectedId) return ann;
             // Divide by scale so nudge feels consistent on screen
@@ -162,7 +179,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [selectedId, annotations, activeVertex, pendingPoly, pendingRectStart, onAnnotationsChange, transform.scale]);
+  }, [selectedId, annotations, activeVertex, pendingPoly, pendingRectStart, onAnnotationsChange, transform.scale, onSnapshot, keyMap]);
 
 
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -206,6 +223,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
             
             const hitIndex = corners.findIndex(c => isPointNearVertex(c, imgPos, threshold, 1));
             if (hitIndex !== -1) {
+              onSnapshot(); // Snapshot before resize
               setActiveVertex({ id: selectedId, index: hitIndex });
               return;
             }
@@ -220,17 +238,20 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
               // Alt+Click to Delete Vertex
               if (e.altKey) {
                 if (ann.points.length > 3) {
+                  onSnapshot();
                   const newPoints = ann.points.filter((_, i) => i !== clickedVertexIndex);
                   onAnnotationsChange(annotations.map(a => a.id === selectedId ? { ...a, points: newPoints } : a));
                 }
                 return;
               }
+              onSnapshot();
               setActiveVertex({ id: selectedId, index: clickedVertexIndex });
               return;
             }
             
             // Check for Edge Click (Insert Point)
             if (hoveredEdge && hoveredEdge.id === selectedId) {
+               onSnapshot();
                const newPoints = [...ann.points];
                newPoints.splice(hoveredEdge.index + 1, 0, hoveredEdge.point);
                const newAnn = { ...ann, points: newPoints };
@@ -261,6 +282,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
         if (imgPos.x >= minX - buffer && imgPos.x <= maxX + buffer && 
             imgPos.y >= minY - buffer && imgPos.y <= maxY + buffer) {
            onSelect(ann.id);
+           onSnapshot();
            setDragStart(imgPos);
            setIsDragging(true);
            return;
@@ -273,12 +295,15 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
 
     // 3. Drawing Rectangle
     if (currentTool === 'rectangle') {
+      onSnapshot();
       setPendingRectStart(imgPos);
       return;
     }
 
     // 4. Drawing Polygon
     if (currentTool === 'polygon') {
+      if (pendingPoly.length === 0) onSnapshot();
+
       // Close loop if near start
       if (pendingPoly.length >= 3) {
         const startPoint = pendingPoly[0];
@@ -299,6 +324,12 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
           onAnnotationsChange([...annotations, newPoly]);
           onSelect(newPoly.id);
           setPendingPoly([]);
+          
+          // Trigger label popup at center of polygon
+          const centerX = pendingPoly.reduce((sum, p) => sum + p.x, 0) / pendingPoly.length;
+          const centerY = pendingPoly.reduce((sum, p) => sum + p.y, 0) / pendingPoly.length;
+          const screenPos = imageToScreen(centerX, centerY, transform);
+          onShapeComplete(newPoly.id, screenPos);
           return;
         }
       }
@@ -338,7 +369,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
           const p2 = ann.points[(i + 1) % ann.points.length];
           const dist = getDistanceToSegment(imgPos, p1, p2);
           if (dist < edgeThreshold) {
-            foundEdge = { id: selectedId, index: i, point: imgPos }; // Projection logic could be better, but mouse pos is fine for insert
+            foundEdge = { id: selectedId, index: i, point: imgPos }; 
             break;
           }
         }
@@ -350,350 +381,413 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
       setHoveredEdge(null);
     }
 
-    // 3. Panning
-    if ((currentTool === 'pan' || isSpacePressed || (e.buttons === 4 && dragStart)) && isDragging && dragStart) {
-      const dx = e.clientX - dragStart.x;
-      const dy = e.clientY - dragStart.y;
-      onTransformChange({
-        ...transform,
-        x: transform.x + dx,
-        y: transform.y + dy,
+    // 3. Hover Detection for Tooltip (When not dragging/drawing)
+    if (!isDragging && !pendingRectStart && pendingPoly.length === 0) {
+      let foundId = null;
+      for (let i = annotations.length - 1; i >= 0; i--) {
+        const ann = annotations[i];
+        if (!ann.visible) continue;
+        
+        // BBox Check (Reused from selection logic)
+        const xs = ann.points.map(p => p.x);
+        const ys = ann.points.map(p => p.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        const buffer = 5 / transform.scale;
+        
+        if (imgPos.x >= minX - buffer && imgPos.x <= maxX + buffer && 
+            imgPos.y >= minY - buffer && imgPos.y <= maxY + buffer) {
+             foundId = ann.id;
+             break;
+        }
+      }
+      setHoveredAnnotationId(foundId);
+      if (foundId) {
+         setTooltipPos(pos);
+      } else {
+         setTooltipPos(null);
+      }
+    } else {
+      setHoveredAnnotationId(null);
+      setTooltipPos(null);
+    }
+
+    // 4. Panning
+    if ((currentTool === 'pan' || isSpacePressed || e.button === 1) && isDragging && dragStart) {
+       const dx = e.clientX - dragStart.x;
+       const dy = e.clientY - dragStart.y;
+       onTransformChange({
+         ...transform,
+         x: transform.x + dx,
+         y: transform.y + dy
+       });
+       setDragStart({ x: e.clientX, y: e.clientY });
+       return;
+    }
+
+    // 5. Dragging Whole Shape
+    if (isDragging && dragStart && selectedId && !activeVertex && currentTool === 'select') {
+      const dx = imgPos.x - dragStart.x; // Delta in image coordinates
+      const dy = imgPos.y - dragStart.y; // This logic is slightly flawed for raw drag, better to use delta screen and convert
+
+      // Improved Drag Logic:
+      // We need delta in image space. 
+      // Previous imgPos was `dragStart` (in image space). Current `imgPos`.
+      // Delta = imgPos - dragStart.
+      // But we update dragStart to current imgPos after applying.
+      
+      const newAnnotations = annotations.map(ann => {
+        if (ann.id !== selectedId) return ann;
+        return {
+          ...ann,
+          points: ann.points.map(p => ({ x: p.x + dx, y: p.y + dy }))
+        };
       });
-      setDragStart({ x: e.clientX, y: e.clientY });
+      onAnnotationsChange(newAnnotations);
+      setDragStart(imgPos); // Reset drag start to current to avoid compounding acceleration
       return;
     }
 
-    // 4. Vertex Editing
-    if (activeVertex) {
-      const ann = annotations.find(a => a.id === activeVertex.id);
+    // 6. Dragging Vertex / Handle
+    if (activeVertex && selectedId) {
+      const ann = annotations.find(a => a.id === selectedId);
       if (!ann) return;
 
       if (ann.type === 'rectangle') {
-        let x1 = Math.min(ann.points[0].x, ann.points[1].x);
-        let y1 = Math.min(ann.points[0].y, ann.points[1].y);
-        let x2 = Math.max(ann.points[0].x, ann.points[1].x);
-        let y2 = Math.max(ann.points[0].y, ann.points[1].y);
+        // Rectangle Resize Logic
+        const p1 = ann.points[0];
+        const p2 = ann.points[1];
+        
+        let newP1 = { ...p1 };
+        let newP2 = { ...p2 };
+        
+        // Calculate current bounds
+        const minX = Math.min(p1.x, p2.x);
+        const maxX = Math.max(p1.x, p2.x);
+        const minY = Math.min(p1.y, p2.y);
+        const maxY = Math.max(p1.y, p2.y);
 
-        // 0: TL, 1: TR, 2: BR, 3: BL
-        switch(activeVertex.index) {
-          case 0: x1 = imgPos.x; y1 = imgPos.y; break;
-          case 1: x2 = imgPos.x; y1 = imgPos.y; break;
-          case 2: x2 = imgPos.x; y2 = imgPos.y; break;
-          case 3: x1 = imgPos.x; y2 = imgPos.y; break;
+        // activeVertex.index maps to: 0:TL, 1:TR, 2:BR, 3:BL
+        // We update the bounds based on which corner is dragged
+        if (activeVertex.index === 0) { // TL
+           newP1 = { x: imgPos.x, y: imgPos.y };
+           newP2 = { x: maxX, y: maxY };
+        } else if (activeVertex.index === 1) { // TR
+           newP1 = { x: minX, y: imgPos.y };
+           newP2 = { x: imgPos.x, y: maxY };
+        } else if (activeVertex.index === 2) { // BR
+           newP1 = { x: minX, y: minY };
+           newP2 = { x: imgPos.x, y: imgPos.y };
+        } else if (activeVertex.index === 3) { // BL
+           newP1 = { x: imgPos.x, y: minY };
+           newP2 = { x: maxX, y: imgPos.y };
         }
-        const newAnn = { ...ann, points: [{ x: x1, y: y1 }, { x: x2, y: y2 }] };
-        onAnnotationsChange(annotations.map(a => a.id === ann.id ? newAnn : a));
+
+        const newAnn = { ...ann, points: [newP1, newP2] };
+        onAnnotationsChange(annotations.map(a => a.id === selectedId ? newAnn : a));
 
       } else {
-        // Polygon
-        const newAnns = annotations.map(a => {
-          if (a.id !== activeVertex.id) return a;
-          const newPoints = [...a.points];
-          newPoints[activeVertex.index] = imgPos;
-          return { ...a, points: newPoints };
-        });
-        onAnnotationsChange(newAnns);
+        // Polygon Vertex Move
+        const newPoints = [...ann.points];
+        newPoints[activeVertex.index] = imgPos;
+        const newAnn = { ...ann, points: newPoints };
+        onAnnotationsChange(annotations.map(a => a.id === selectedId ? newAnn : a));
       }
       return;
     }
 
-    // 5. Move Shape
-    if (currentTool === 'select' && isDragging && dragStart && selectedId) {
-       const dx = imgPos.x - dragStart.x;
-       const dy = imgPos.y - dragStart.y;
-       
-       const newAnns = annotations.map(ann => {
-          if (ann.id !== selectedId) return ann;
-          return {
-            ...ann,
-            points: ann.points.map(p => ({ x: p.x + dx, y: p.y + dy }))
-          };
-       });
-       onAnnotationsChange(newAnns);
-       setDragStart(imgPos); 
-       return;
+    // 7. Drawing Rectangle
+    if (pendingRectStart && currentTool === 'rectangle') {
+       // Just visual update handled by render, nothing to commit yet
     }
   };
 
   const handleMouseUp = () => {
-    // Finish Rectangle
-    if (currentTool === 'rectangle' && pendingRectStart && currentMouseImagePos) {
-      const w = Math.abs(pendingRectStart.x - currentMouseImagePos.x);
-      const h = Math.abs(pendingRectStart.y - currentMouseImagePos.y);
-      
-      if (w > 2 && h > 2) { // Minimum 2px size
-        const x1 = Math.min(pendingRectStart.x, currentMouseImagePos.x);
-        const y1 = Math.min(pendingRectStart.y, currentMouseImagePos.y);
-        const x2 = Math.max(pendingRectStart.x, currentMouseImagePos.x);
-        const y2 = Math.max(pendingRectStart.y, currentMouseImagePos.y);
+    setIsDragging(false);
+    setDragStart(null);
+    setActiveVertex(null);
 
+    // Finish Rectangle
+    if (pendingRectStart && currentTool === 'rectangle') {
+      const imgPos = currentMouseImagePos || { x: 0, y: 0 };
+      
+      // Prevent tiny rectangles
+      if (Math.abs(imgPos.x - pendingRectStart.x) > 1 && Math.abs(imgPos.y - pendingRectStart.y) > 1) {
         const newRect: Annotation = {
           id: Date.now().toString(),
           label: 'object',
           type: 'rectangle',
-          points: [{ x: x1, y: y1 }, { x: x2, y: y2 }],
+          points: [pendingRectStart, imgPos],
           color: currentColor,
           visible: true
         };
         onAnnotationsChange([...annotations, newRect]);
         onSelect(newRect.id);
+        
+        // Popup
+        const centerX = (pendingRectStart.x + imgPos.x) / 2;
+        const centerY = (pendingRectStart.y + imgPos.y) / 2;
+        const screenPos = imageToScreen(centerX, centerY, transform);
+        onShapeComplete(newRect.id, screenPos);
       }
       setPendingRectStart(null);
     }
-
-    setIsDragging(false);
-    setActiveVertex(null);
   };
 
-  // Determine Cursor
-  let cursorStyle = 'default';
-  if (currentTool === 'pan' || isSpacePressed) {
-    cursorStyle = isDragging ? 'grabbing' : 'grab';
-  } else if (currentTool === 'rectangle' || currentTool === 'polygon') {
-    cursorStyle = 'crosshair';
-  } else if (hoveredEdge) {
-    cursorStyle = 'copy'; // Indicate add point
-  } else if (currentTool === 'select' && activeVertex === null && selectedId) {
-      // Logic could be refined to show 'move' only when hovering selected shape body
-      cursorStyle = 'default';
-  }
-
-  const containerStyle = {
+  // --- Render Helpers ---
+  
+  // Dynamic CSS variables for high-performance rendering
+  const style = {
     '--scale': transform.scale,
-    cursor: cursorStyle
-  } as CSSProperties;
+    cursor: isSpacePressed ? 'grab' : 
+            currentTool === 'pan' ? (isDragging ? 'grabbing' : 'grab') :
+            currentTool === 'rectangle' || currentTool === 'polygon' ? 'crosshair' : 
+            hoveredEdge ? 'copy' :
+            'default'
+  } as React.CSSProperties;
 
   return (
-    <div className="flex-1 relative bg-gray-950 overflow-hidden flex flex-col">
-      
+    <div 
+      className="flex-1 bg-gray-950 overflow-hidden relative select-none"
+      ref={containerRef}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+      style={style}
+    >
+      {/* Container for the transformable content */}
       <div 
-        ref={containerRef}
-        className="flex-1 relative overflow-hidden outline-none"
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        style={containerStyle}
+        className="origin-top-left absolute will-change-transform"
+        style={{
+          transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+        }}
       >
-        <div
-          style={{
-            transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
-            transformOrigin: '0 0',
-            width: imageSize.width,
-            height: imageSize.height,
-            position: 'absolute',
-            pointerEvents: 'none',
-          }}
+        {/* The Image */}
+        <img 
+          src={imageSrc} 
+          alt="workarea" 
+          className="block pointer-events-none"
+          draggable={false}
+        />
+
+        {/* SVG Overlay */}
+        <svg 
+          width={imageSize.width} 
+          height={imageSize.height}
+          className="absolute top-0 left-0 overflow-visible"
         >
-          {/* Image */}
-          <img
-            src={imageSrc}
-            alt="Workspace"
-            className="select-none pointer-events-none"
-            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-          />
-
-          {/* SVG Overlay */}
-          <svg
-            width={imageSize.width}
-            height={imageSize.height}
-            className="absolute top-0 left-0 overflow-visible pointer-events-auto"
-          >
-            {/* 1. Existing Annotations */}
-            {annotations.map((ann) => {
-               if (!ann.visible) return null;
-               const isSelected = selectedId === ann.id;
-               
-               const strokeWidth = `calc(${isSelected ? 3 : 2}px / var(--scale))`;
-               const vertexRadius = `calc(${isSelected ? 5 : 3.5}px / var(--scale))`;
-
-               if (ann.type === 'rectangle') {
-                 const x1 = Math.min(ann.points[0].x, ann.points[1].x);
-                 const y1 = Math.min(ann.points[0].y, ann.points[1].y);
-                 const w = Math.abs(ann.points[1].x - ann.points[0].x);
-                 const h = Math.abs(ann.points[1].y - ann.points[0].y);
-
-                 const handles = isSelected ? [
-                    { x: x1, y: y1, cursor: 'nw-resize' },
-                    { x: x1 + w, y: y1, cursor: 'ne-resize' },
-                    { x: x1 + w, y: y1 + h, cursor: 'se-resize' },
-                    { x: x1, y: y1 + h, cursor: 'sw-resize' }
-                 ] : [];
-
-                 return (
-                   <g key={ann.id}>
-                     <rect
-                       x={x1} y={y1} width={w} height={h}
-                       fill={ann.color}
-                       fillOpacity={fillOpacity}
-                       stroke={ann.color}
-                       style={{ strokeWidth, vectorEffect: 'non-scaling-stroke' }}
-                     />
-                     {handles.map((h, idx) => (
-                       <circle
-                         key={idx}
-                         cx={h.x} cy={h.y}
-                         r={0}
-                         fill="white"
-                         stroke={ann.color}
-                         style={{ r: vertexRadius, strokeWidth: `calc(1.5px / var(--scale))`, cursor: h.cursor }}
-                       />
-                     ))}
-                   </g>
-                 );
-               } else {
-                 // Polygon
-                 const pointsStr = ann.points.map(p => `${p.x},${p.y}`).join(' ');
-                 return (
-                   <g key={ann.id}>
-                     <polygon
-                       points={pointsStr}
-                       fill={ann.color}
-                       fillOpacity={fillOpacity}
-                       stroke={ann.color}
-                       style={{ strokeWidth, vectorEffect: 'non-scaling-stroke' }}
-                     />
-                     {isSelected && ann.points.map((p, idx) => (
-                       <circle
-                         key={idx}
-                         cx={p.x} cy={p.y}
-                         r={0}
-                         fill="white"
-                         stroke={ann.color}
-                         style={{ 
-                           r: vertexRadius, 
-                           strokeWidth: `calc(1.5px / var(--scale))`,
-                           cursor: 'move'
-                         }}
-                       />
-                     ))}
-                     {/* Hovered Edge Indicator */}
-                     {hoveredEdge && hoveredEdge.id === ann.id && (
-                       <circle
-                         cx={hoveredEdge.point.x} cy={hoveredEdge.point.y}
-                         r={0}
-                         fill={ann.color}
-                         stroke="white"
-                         style={{ r: vertexRadius, strokeWidth: `calc(1px / var(--scale))`, opacity: 0.8 }}
-                       />
-                     )}
-                   </g>
-                 );
-               }
-            })}
-
-            {/* 2. Pending Drawings */}
-            {currentTool === 'rectangle' && pendingRectStart && currentMouseImagePos && (
-              <rect
-                x={Math.min(pendingRectStart.x, currentMouseImagePos.x)}
-                y={Math.min(pendingRectStart.y, currentMouseImagePos.y)}
-                width={Math.abs(currentMouseImagePos.x - pendingRectStart.x)}
-                height={Math.abs(currentMouseImagePos.y - pendingRectStart.y)}
-                fill={currentColor}
-                fillOpacity={0.2}
-                stroke={currentColor}
-                strokeDasharray="4"
-                style={{ strokeWidth: `calc(2px / var(--scale))` }}
-              />
-            )}
-
-            {currentTool === 'polygon' && pendingPoly.length > 0 && (
-              <g>
-                <polyline
-                  points={pendingPoly.map(p => `${p.x},${p.y}`).join(' ')}
-                  fill="none"
-                  stroke={currentColor}
-                  style={{ strokeWidth: `calc(2px / var(--scale))` }}
-                />
-                {currentMouseImagePos && (
-                  <line
-                    x1={pendingPoly[pendingPoly.length - 1].x}
-                    y1={pendingPoly[pendingPoly.length - 1].y}
-                    x2={currentMouseImagePos.x}
-                    y2={currentMouseImagePos.y}
-                    stroke={currentColor}
-                    strokeDasharray="4"
-                    style={{ strokeWidth: `calc(1px / var(--scale))` }}
-                  />
-                )}
-                {pendingPoly.map((p, i) => (
-                   <circle
-                     key={i}
-                     cx={p.x}
-                     cy={p.y}
-                     r={0}
-                     fill={i === 0 && isHoveringStartPoint ? '#fff' : currentColor}
-                     stroke={currentColor}
-                     style={{ 
-                       r: i === 0 && isHoveringStartPoint 
-                          ? `calc(8px / var(--scale))` 
-                          : `calc(3px / var(--scale))`,
-                       strokeWidth: `calc(1px / var(--scale))`
-                     }}
-                   />
-                ))}
-              </g>
-            )}
+          {/* 1. Existing Annotations */}
+          {annotations.map((ann) => {
+            if (!ann.visible) return null;
+            const isSelected = selectedId === ann.id;
+            const isHovered = hoveredAnnotationId === ann.id;
             
-            {/* 3. Crosshairs */}
-            {showCrosshairs && currentMouseImagePos && (
-               <g style={{ pointerEvents: 'none' }}>
-                 <line 
-                   x1={0} y1={currentMouseImagePos.y} 
-                   x2={imageSize.width} y2={currentMouseImagePos.y}
-                   stroke="rgba(255,255,255,0.6)"
-                   style={{ strokeWidth: `calc(1px / var(--scale))` }}
-                   strokeDasharray="3"
-                 />
-                 <line 
-                   x1={currentMouseImagePos.x} y1={0} 
-                   x2={currentMouseImagePos.x} y2={imageSize.height}
-                   stroke="rgba(255,255,255,0.6)"
-                   style={{ strokeWidth: `calc(1px / var(--scale))` }}
-                   strokeDasharray="3"
-                 />
-               </g>
-            )}
-          </svg>
-        </div>
-      </div>
+            // Dynamic stroke width calculation using CSS vars
+            const strokeWidth = isHovered ? "calc(3px / var(--scale))" : "calc(2px / var(--scale))";
+            const opacity = isSelected || isHovered ? Math.max(0.4, fillOpacity) : fillOpacity;
+            const dashArray = ""; // Could add dashed lines for specific types
 
-      {/* Footer Info */}
-      <div className="h-8 bg-gray-900 border-t border-gray-700 flex items-center justify-between px-4 text-xs text-gray-400 select-none z-20">
-        <div className="flex items-center space-x-4">
-          <span className="flex items-center space-x-1 tabular-nums">
-            <Move size={12} />
-            <span>
-              {currentMouseImagePos ? Math.round(currentMouseImagePos.x) : 0}, 
-              {currentMouseImagePos ? Math.round(currentMouseImagePos.y) : 0}
-            </span>
-          </span>
-          <span className="tabular-nums">
-            Zoom: {Math.round(transform.scale * 100)}%
-          </span>
-        </div>
-        
-        <div className="flex items-center space-x-4">
-           {selectedId && (
-              <span className="text-gray-300 flex items-center gap-1">
-                 <MousePointer2 size={12}/> Edit Mode
-              </span>
-           )}
-           {pendingPoly.length > 0 && (
-             <div className="flex items-center space-x-2 animate-pulse text-blue-400 font-semibold">
-               <span>Drawing Polygon...</span>
-               <button onClick={handleUndoPoint} className="flex items-center gap-1 px-1.5 py-0.5 bg-gray-800 rounded hover:bg-gray-700">
-                 <ArrowLeft size={10} /> Backspace
-               </button>
-               <button onClick={handleCancelDraw} className="flex items-center gap-1 px-1.5 py-0.5 bg-gray-800 rounded hover:bg-gray-700 text-red-300">
-                 <X size={10} /> Esc
-               </button>
+            if (ann.type === 'rectangle') {
+              const x = Math.min(ann.points[0].x, ann.points[1].x);
+              const y = Math.min(ann.points[0].y, ann.points[1].y);
+              const w = Math.abs(ann.points[0].x - ann.points[1].x);
+              const h = Math.abs(ann.points[0].y - ann.points[1].y);
+
+              return (
+                <g key={ann.id}>
+                  <rect
+                    x={x} y={y} width={w} height={h}
+                    fill={ann.color}
+                    fillOpacity={opacity}
+                    stroke={ann.color}
+                    style={{ strokeWidth }}
+                  />
+                  {/* Resize Handles (only if selected) */}
+                  {isSelected && (
+                     <>
+                        {[
+                          {x, y}, {x: x+w, y}, {x: x+w, y: y+h}, {x, y: y+h}
+                        ].map((p, idx) => (
+                           <rect
+                             key={idx}
+                             x={p.x} y={p.y}
+                             width="1" height="1" // Size handled by stroke/scale
+                             fill="white"
+                             stroke="black"
+                             style={{ 
+                               strokeWidth: "calc(1px / var(--scale))",
+                               transformBox: "fill-box",
+                               transformOrigin: "center",
+                               transform: "scale(calc(6 / var(--scale))) translate(-50%, -50%)"
+                             }}
+                           />
+                        ))}
+                     </>
+                  )}
+                </g>
+              );
+            } else {
+              const pointsStr = ann.points.map(p => `${p.x},${p.y}`).join(' ');
+              return (
+                <g key={ann.id}>
+                  <polygon
+                    points={pointsStr}
+                    fill={ann.color}
+                    fillOpacity={opacity}
+                    stroke={ann.color}
+                    style={{ strokeWidth }}
+                  />
+                  {/* Vertices (only if selected) */}
+                  {isSelected && ann.points.map((p, idx) => (
+                    <circle
+                      key={idx}
+                      cx={p.x} cy={p.y}
+                      r="1" // Radius handled by scale
+                      fill="white"
+                      stroke="black"
+                      style={{ 
+                         strokeWidth: "calc(1px / var(--scale))",
+                         transform: "scale(calc(4 / var(--scale)))"
+                      }}
+                    />
+                  ))}
+                  {/* Hover Edge Indicator */}
+                  {hoveredEdge && hoveredEdge.id === ann.id && (
+                    <circle
+                      cx={hoveredEdge.point.x} cy={hoveredEdge.point.y}
+                      r="1"
+                      fill="lime"
+                      stroke="black"
+                      style={{ 
+                         strokeWidth: "calc(1px / var(--scale))",
+                         transform: "scale(calc(4 / var(--scale)))"
+                      }}
+                    />
+                  )}
+                </g>
+              );
+            }
+          })}
+
+          {/* 2. Pending Polygon */}
+          {pendingPoly.length > 0 && (
+            <g>
+               <polyline
+                 points={pendingPoly.map(p => `${p.x},${p.y}`).join(' ')}
+                 fill="none"
+                 stroke={currentColor}
+                 style={{ strokeWidth: "calc(2px / var(--scale))" }}
+               />
+               {pendingPoly.map((p, idx) => (
+                 <circle
+                   key={idx}
+                   cx={p.x} cy={p.y}
+                   r="1"
+                   fill="white"
+                   stroke={currentColor}
+                   style={{ 
+                      strokeWidth: "calc(1px / var(--scale))",
+                      transform: idx === 0 && isHoveringStartPoint ? "scale(calc(8 / var(--scale)))" : "scale(calc(4 / var(--scale)))",
+                      transition: "transform 0.1s"
+                   }}
+                 />
+               ))}
+               {/* Rubber band line */}
+               {currentMouseImagePos && (
+                 <line
+                   x1={pendingPoly[pendingPoly.length - 1].x}
+                   y1={pendingPoly[pendingPoly.length - 1].y}
+                   x2={currentMouseImagePos.x}
+                   y2={currentMouseImagePos.y}
+                   stroke={currentColor}
+                   strokeDasharray="4,4"
+                   style={{ strokeWidth: "calc(1.5px / var(--scale))" }}
+                 />
+               )}
+            </g>
+          )}
+
+          {/* 3. Pending Rectangle */}
+          {pendingRectStart && currentMouseImagePos && (
+            <rect
+              x={Math.min(pendingRectStart.x, currentMouseImagePos.x)}
+              y={Math.min(pendingRectStart.y, currentMouseImagePos.y)}
+              width={Math.abs(pendingRectStart.x - currentMouseImagePos.x)}
+              height={Math.abs(pendingRectStart.y - currentMouseImagePos.y)}
+              fill={currentColor}
+              fillOpacity={0.2}
+              stroke={currentColor}
+              style={{ strokeWidth: "calc(2px / var(--scale))" }}
+            />
+          )}
+        </svg>
+      </div>
+      
+      {/* UI Overlays (Crosshairs, Tooltips, Coordinates) - Fixed Screen Position */}
+      <div className="absolute inset-0 pointer-events-none">
+        {/* Crosshairs */}
+        {showCrosshairs && currentMouseImagePos && (
+          <>
+             <div 
+               className="absolute bg-blue-500/50" 
+               style={{ 
+                 left: 0, right: 0, height: '1px', 
+                 top: (currentMouseImagePos.y * transform.scale + transform.y)
+               }} 
+             />
+             <div 
+               className="absolute bg-blue-500/50" 
+               style={{ 
+                 top: 0, bottom: 0, width: '1px', 
+                 left: (currentMouseImagePos.x * transform.scale + transform.x) 
+               }} 
+             />
+          </>
+        )}
+
+        {/* Hover Tooltip */}
+        {tooltipPos && hoveredAnnotationId && (() => {
+           const ann = annotations.find(a => a.id === hoveredAnnotationId);
+           if (!ann) return null;
+           return (
+             <div 
+               className="absolute z-50 bg-gray-900/90 text-white text-xs px-2 py-1 rounded shadow-lg border border-gray-700 pointer-events-none"
+               style={{ left: tooltipPos.x + 15, top: tooltipPos.y + 15 }}
+             >
+               <div className="font-bold">{getLabelName(ann.label).split('(')[0]}</div>
+               <div className="text-gray-400 text-[10px]">{ann.type}</div>
              </div>
-           )}
-           <div className="hidden md:flex space-x-3 text-gray-500">
-             <span>Space+Drag to Pan</span>
-             <span>Wheel to Zoom</span>
-             <span>Alt+Click Del Point</span>
+           );
+        })()}
+
+        {/* Status Bar */}
+        <div className="absolute bottom-0 left-0 right-0 bg-gray-900/80 backdrop-blur-sm border-t border-gray-700 p-1 flex justify-between items-center px-4 text-[10px] text-gray-400">
+           <div className="flex space-x-4">
+             {currentMouseImagePos && (
+               <span>X: {Math.round(currentMouseImagePos.x)} Y: {Math.round(currentMouseImagePos.y)}</span>
+             )}
+             {selectedId && <span>选中: #{selectedId.slice(-4)}</span>}
+           </div>
+           
+           <div className="flex space-x-3">
+             {pendingPoly.length > 0 && (
+                <>
+                  <span className="flex items-center gap-1"><kbd className="bg-gray-800 px-1 rounded">Enter</kbd> 完成</span>
+                  <span className="flex items-center gap-1"><kbd className="bg-gray-800 px-1 rounded">Backspace</kbd> 撤销点</span>
+                  <span className="flex items-center gap-1"><kbd className="bg-gray-800 px-1 rounded">Esc</kbd> 取消</span>
+                </>
+             )}
+             {currentTool === 'select' && selectedId && (
+               <>
+                  <span className="flex items-center gap-1"><kbd className="bg-gray-800 px-1 rounded">Delete</kbd> 删除</span>
+                  <span className="flex items-center gap-1"><kbd className="bg-gray-800 px-1 rounded">Arrows</kbd> 微调</span>
+               </>
+             )}
+             <span className="flex items-center gap-1"><kbd className="bg-gray-800 px-1 rounded">Space</kbd> 拖拽平移</span>
+             <span className="flex items-center gap-1"><kbd className="bg-gray-800 px-1 rounded">Wheel</kbd> 缩放</span>
            </div>
         </div>
       </div>
