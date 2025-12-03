@@ -12,18 +12,23 @@ import { Upload } from 'lucide-react';
 const App: React.FC = () => {
   // --- State ---
   const [imageSrc, setImageSrc] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null); // New: Store filename
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [currentTool, setCurrentTool] = useState<ToolType>('select');
   const [transform, setTransform] = useState<ViewTransform>({ scale: 1, x: 0, y: 0 });
   
+  // Padding State (Configurable space around the image)
+  const [canvasPadding, setCanvasPadding] = useState<{ x: number, y: number }>({ x: 50, y: 50 });
+
   // History State
   const [history, setHistory] = useState<{ past: Annotation[][], future: Annotation[][] }>({ past: [], future: [] });
   
   // Display Settings
   const [fillOpacity, setFillOpacity] = useState(0.2);
   const [showCrosshairs, setShowCrosshairs] = useState(true);
+  const [showImageName, setShowImageName] = useState(true); // New: Toggle for filename
 
   // Settings & Shortcuts
   const [keyMap, setKeyMap] = useState<KeyMap>(() => {
@@ -128,6 +133,7 @@ const App: React.FC = () => {
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setFileName(file.name); // Store filename
       const reader = new FileReader();
       reader.onload = (event) => {
         const src = event.target?.result as string;
@@ -135,14 +141,19 @@ const App: React.FC = () => {
         const img = new Image();
         img.onload = () => {
           setImageSize({ width: img.width, height: img.height });
+          
+          // Calculate View
           const maxWidth = window.innerWidth - 384; 
           const maxHeight = window.innerHeight;
           const scale = Math.min(maxWidth / img.width, maxHeight / img.height) * 0.9;
-          setTransform({
-            scale,
-            x: (window.innerWidth - 64 - 320 - img.width * scale) / 2,
-            y: (window.innerHeight - img.height * scale) / 2
-          });
+          
+          // Center the image (accounting for padding)
+          // Original Centered X = (W - w*scale)/2
+          // New Transform X = Original Centered X - (padding * scale)
+          const x = (maxWidth - img.width * scale) / 2 - (canvasPadding.x * scale);
+          const y = (maxHeight - img.height * scale) / 2 - (canvasPadding.y * scale);
+          
+          setTransform({ scale, x, y });
           setAnnotations([]);
           setHistory({ past: [], future: [] });
         };
@@ -164,11 +175,11 @@ const App: React.FC = () => {
     const maxWidth = window.innerWidth - 384; 
     const maxHeight = window.innerHeight;
     const scale = Math.min(maxWidth / imageSize.width, maxHeight / imageSize.height) * 0.9;
-    setTransform({
-        scale,
-        x: (window.innerWidth - 64 - 320 - imageSize.width * scale) / 2,
-        y: (window.innerHeight - imageSize.height * scale) / 2
-    });
+    
+    const x = (maxWidth - imageSize.width * scale) / 2 - (canvasPadding.x * scale);
+    const y = (maxHeight - imageSize.height * scale) / 2 - (canvasPadding.y * scale);
+
+    setTransform({ scale, x, y });
   };
 
   const handleExport = () => {
@@ -176,6 +187,7 @@ const App: React.FC = () => {
       version: "1.0",
       imageHeight: imageSize.height,
       imageWidth: imageSize.width,
+      imageName: fileName, // Include filename in export
       shapes: annotations.map(a => ({
         label: a.label,
         points: a.points.map(p => [p.x, p.y]),
@@ -186,7 +198,7 @@ const App: React.FC = () => {
     }, null, 2));
     const downloadAnchorNode = document.createElement('a');
     downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", "grading_annotations.json");
+    downloadAnchorNode.setAttribute("download", `${fileName?.split('.')[0] || 'annotations'}.json`); // Use filename for export
     document.body.appendChild(downloadAnchorNode);
     downloadAnchorNode.click();
     downloadAnchorNode.remove();
@@ -279,6 +291,8 @@ const App: React.FC = () => {
       <div className="flex-1 flex flex-col relative overflow-hidden">
         <CanvasArea
           imageSrc={imageSrc}
+          fileName={fileName}
+          showImageName={showImageName}
           imageSize={imageSize}
           annotations={annotations}
           currentTool={currentTool}
@@ -293,6 +307,7 @@ const App: React.FC = () => {
           onShapeComplete={handleShapeComplete}
           onSnapshot={snapshotHistory}
           keyMap={keyMap}
+          padding={canvasPadding}
         />
         
         {labelPopup.visible && (
@@ -305,6 +320,7 @@ const App: React.FC = () => {
       </div>
 
       <Sidebar
+        imageSize={imageSize}
         annotations={annotations}
         selectedId={selectedId}
         onSelect={setSelectedId}
@@ -318,6 +334,8 @@ const App: React.FC = () => {
         onFillOpacityChange={setFillOpacity}
         showCrosshairs={showCrosshairs}
         onToggleCrosshairs={() => setShowCrosshairs(!showCrosshairs)}
+        showImageName={showImageName}
+        onToggleImageName={() => setShowImageName(!showImageName)}
       />
 
       <SettingsModal

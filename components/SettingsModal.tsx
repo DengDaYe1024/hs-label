@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { X, Keyboard } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Keyboard, Download, Upload, RotateCcw } from 'lucide-react';
 import { KeyMap, ActionId, KeyBinding } from '../types';
 import { ACTION_NAMES } from '../constants';
 import { formatShortcut } from '../utils/keyboard';
@@ -20,6 +20,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onResetDefaults
 }) => {
   const [editingAction, setEditingAction] = useState<ActionId | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!editingAction) return;
@@ -48,6 +49,52 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [editingAction, keyMap, onUpdateKeyMap]);
+
+  const handleExport = () => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(keyMap, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", "labelme_shortcuts.json");
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+  };
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const result = event.target?.result;
+        if (typeof result === 'string') {
+          const importedMap = JSON.parse(result) as KeyMap;
+          
+          // Validate that it has all required keys
+          const requiredKeys = Object.keys(ACTION_NAMES) as ActionId[];
+          const missingKeys = requiredKeys.filter(k => !importedMap[k]);
+
+          if (missingKeys.length === 0) {
+             onUpdateKeyMap(importedMap);
+             alert('配置已成功导入 (Configuration imported successfully)');
+          } else {
+             alert(`导入失败: 缺少配置项 (Import failed: Missing keys: ${missingKeys.join(', ')})`);
+          }
+        }
+      } catch (error) {
+        console.error("Import failed:", error);
+        alert('导入失败 (Import failed)');
+      }
+      // Reset input
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+    reader.readAsText(file);
+  };
 
   if (!isOpen) return null;
 
@@ -99,22 +146,49 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-gray-700 bg-gray-900/50 flex justify-between items-center rounded-b-xl">
-          <div className="text-xs text-gray-500">
-            点击按键框即可录入新的快捷键
+        <div className="p-4 border-t border-gray-700 bg-gray-900/50 flex flex-col sm:flex-row justify-between items-center gap-4 rounded-b-xl">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <input 
+               type="file" 
+               accept=".json" 
+               ref={fileInputRef} 
+               className="hidden" 
+               onChange={handleFileChange}
+            />
+            <button
+              onClick={handleImportClick}
+              className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded transition-colors"
+              title="导入配置"
+            >
+              <Upload size={14} /> 导入
+            </button>
+            <button
+              onClick={handleExport}
+              className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded transition-colors"
+              title="导出配置"
+            >
+              <Download size={14} /> 导出
+            </button>
+            <button
+              onClick={onResetDefaults}
+              className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-red-400 px-3 py-2 hover:bg-red-900/10 rounded transition-colors ml-2"
+              title="恢复默认设置"
+            >
+              <RotateCcw size={14} /> 重置
+            </button>
           </div>
-          <button
-            onClick={onResetDefaults}
-            className="text-sm text-gray-400 hover:text-red-400 px-4 py-2 hover:bg-red-900/10 rounded transition-colors"
-          >
-            恢复默认设置
-          </button>
-          <button
-            onClick={onClose}
-            className="ml-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
-          >
-            完成
-          </button>
+          
+          <div className="flex items-center gap-4 w-full sm:w-auto justify-end">
+            <span className="text-[10px] text-gray-500 hidden sm:inline">
+              点击按键框录入
+            </span>
+            <button
+              onClick={onClose}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors text-sm w-full sm:w-auto"
+            >
+              完成
+            </button>
+          </div>
         </div>
 
       </div>

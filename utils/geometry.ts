@@ -1,4 +1,4 @@
-import { Point, ViewTransform } from '../types';
+import { Point, ViewTransform, Annotation } from '../types';
 
 export const screenToImage = (
   x: number,
@@ -53,4 +53,28 @@ export const getDistanceToSegment = (p: Point, v: Point, w: Point) => {
   };
   
   return getDistance(p, projection);
+};
+
+// Calculate area of a polygon using Shoelace formula
+export const calculatePolygonArea = (points: Point[]): number => {
+  let area = 0;
+  const n = points.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area += points[i].x * points[j].y;
+    area -= points[j].x * points[i].y;
+  }
+  return Math.abs(area) / 2;
+};
+
+// Get area for any annotation type
+export const getAnnotationArea = (annotation: Annotation): number => {
+  if (annotation.type === 'rectangle') {
+    const width = Math.abs(annotation.points[0].x - annotation.points[1].x);
+    const height = Math.abs(annotation.points[0].y - annotation.points[1].y);
+    return width * height;
+  } else if (annotation.type === 'polygon') {
+    return calculatePolygonArea(annotation.points);
+  }
+  return 0;
 };
