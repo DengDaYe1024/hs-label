@@ -156,7 +156,6 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
 
       // Nudge selected items
       if (selectedIds.length > 0 && !activeVertex) {
-        // Don't nudge if any selected item is locked
         const hasLocked = selectedIds.some(id => annotations.find(a => a.id === id)?.locked);
         if (hasLocked) return;
 
@@ -169,7 +168,6 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
 
         if (dx !== 0 || dy !== 0) {
           e.preventDefault();
-          
           const step = e.shiftKey ? 10 : 1;
           dx *= step;
           dy *= step;
@@ -214,12 +212,10 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
     }
 
     if (e.button !== 0) return;
-    
     e.stopPropagation();
 
     // 2. Editing Mode (Select Tool)
     if (currentTool === 'select') {
-      
       // A. Check for Handle/Vertex Clicks (Only if exactly one item selected)
       if (selectedIds.length === 1) {
         const selectedId = selectedIds[0];
@@ -234,10 +230,8 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
             const y2 = Math.max(ann.points[0].y, ann.points[1].y);
             
             const corners = [
-              { x: x1, y: y1 }, 
-              { x: x2, y: y1 }, 
-              { x: x2, y: y2 }, 
-              { x: x1, y: y2 } 
+              { x: x1, y: y1 }, { x: x2, y: y1 }, 
+              { x: x2, y: y2 }, { x: x1, y: y2 } 
             ];
             
             const hitIndex = corners.findIndex(c => isPointNearVertex(c, imgPos, threshold, 1));
@@ -248,9 +242,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
             }
 
           } else if (ann.type === 'polygon') {
-            const clickedVertexIndex = ann.points.findIndex(p => 
-              isPointNearVertex(p, imgPos, threshold, 1)
-            );
+            const clickedVertexIndex = ann.points.findIndex(p => isPointNearVertex(p, imgPos, threshold, 1));
             
             if (clickedVertexIndex !== -1) {
               if (e.altKey) {
@@ -280,26 +272,20 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
         }
       }
 
-      // B. Check for Shape Body Click (Select & Move)
+      // B. Check for Shape Body Click
       for (let i = annotations.length - 1; i >= 0; i--) {
         const ann = annotations[i];
-        if (!ann.visible) continue;
-        // Don't check for lock here to allow selection (we prevent drag later)
-        // But typical UX is you can't even select locked items directly on canvas
-        if (ann.locked) continue; 
+        if (!ann.visible || ann.locked) continue;
         
         const xs = ann.points.map(p => p.x);
         const ys = ann.points.map(p => p.y);
-        const minX = Math.min(...xs);
-        const maxX = Math.max(...xs);
-        const minY = Math.min(...ys);
-        const maxY = Math.max(...ys);
+        const minX = Math.min(...xs), maxX = Math.max(...xs);
+        const minY = Math.min(...ys), maxY = Math.max(...ys);
         const buffer = 5 / transform.scale;
         
         if (imgPos.x >= minX - buffer && imgPos.x <= maxX + buffer && 
             imgPos.y >= minY - buffer && imgPos.y <= maxY + buffer) {
            
-           // Multi-selection logic
            if (e.ctrlKey || e.metaKey) {
              if (selectedIds.includes(ann.id)) {
                onSelect(selectedIds.filter(id => id !== ann.id));
@@ -307,10 +293,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                onSelect([...selectedIds, ann.id]);
              }
            } else {
-             if (!selectedIds.includes(ann.id)) {
-                onSelect([ann.id]);
-             }
-             // If already selected and no ctrl key, keep selection (to allow batch drag)
+             if (!selectedIds.includes(ann.id)) onSelect([ann.id]);
            }
 
            onSnapshot('移动标注');
@@ -320,10 +303,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
         }
       }
       
-      // Clicked on empty space
-      if (!e.shiftKey) { // Shift key might be used for marquee selection (future), for now clear
-         onSelect([]);
-      }
+      if (!e.shiftKey) onSelect([]);
       return;
     }
 
@@ -340,9 +320,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
 
       if (pendingPoly.length >= 3) {
         const startPoint = pendingPoly[0];
-        const distToStart = Math.sqrt(
-          Math.pow(imgPos.x - startPoint.x, 2) + Math.pow(imgPos.y - startPoint.y, 2)
-        );
+        const distToStart = Math.sqrt(Math.pow(imgPos.x - startPoint.x, 2) + Math.pow(imgPos.y - startPoint.y, 2));
         const threshold = 15 / transform.scale;
 
         if (distToStart < threshold) {
@@ -417,15 +395,11 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
       for (let i = annotations.length - 1; i >= 0; i--) {
         const ann = annotations[i];
         if (!ann.visible) continue;
-        
         const xs = ann.points.map(p => p.x);
         const ys = ann.points.map(p => p.y);
-        const minX = Math.min(...xs);
-        const maxX = Math.max(...xs);
-        const minY = Math.min(...ys);
-        const maxY = Math.max(...ys);
+        const minX = Math.min(...xs), maxX = Math.max(...xs);
+        const minY = Math.min(...ys), maxY = Math.max(...ys);
         const buffer = 5 / transform.scale;
-        
         if (imgPos.x >= minX - buffer && imgPos.x <= maxX + buffer && 
             imgPos.y >= minY - buffer && imgPos.y <= maxY + buffer) {
              foundId = ann.id;
@@ -433,11 +407,8 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
         }
       }
       setHoveredAnnotationId(foundId);
-      if (foundId) {
-         setTooltipPos(pos);
-      } else {
-         setTooltipPos(null);
-      }
+      if (foundId) setTooltipPos(pos);
+      else setTooltipPos(null);
     } else {
       setHoveredAnnotationId(null);
       setTooltipPos(null);
@@ -456,7 +427,6 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
     }
 
     if (isDragging && dragStart && selectedIds.length > 0 && !activeVertex && currentTool === 'select') {
-      // Check if any selected item is locked
       const hasLocked = selectedIds.some(id => annotations.find(a => a.id === id)?.locked);
       if (hasLocked) return;
 
@@ -481,30 +451,15 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
       if (!ann || ann.locked) return;
 
       if (ann.type === 'rectangle') {
-        const p1 = ann.points[0];
-        const p2 = ann.points[1];
-        
-        let newP1 = { ...p1 };
-        let newP2 = { ...p2 };
-        
-        const minX = Math.min(p1.x, p2.x);
-        const maxX = Math.max(p1.x, p2.x);
-        const minY = Math.min(p1.y, p2.y);
-        const maxY = Math.max(p1.y, p2.y);
+        const p1 = ann.points[0], p2 = ann.points[1];
+        let newP1 = { ...p1 }, newP2 = { ...p2 };
+        const minX = Math.min(p1.x, p2.x), maxX = Math.max(p1.x, p2.x);
+        const minY = Math.min(p1.y, p2.y), maxY = Math.max(p1.y, p2.y);
 
-        if (activeVertex.index === 0) { // TL
-           newP1 = { x: imgPos.x, y: imgPos.y };
-           newP2 = { x: maxX, y: maxY };
-        } else if (activeVertex.index === 1) { // TR
-           newP1 = { x: minX, y: imgPos.y };
-           newP2 = { x: imgPos.x, y: maxY };
-        } else if (activeVertex.index === 2) { // BR
-           newP1 = { x: minX, y: minY };
-           newP2 = { x: imgPos.x, y: imgPos.y };
-        } else if (activeVertex.index === 3) { // BL
-           newP1 = { x: imgPos.x, y: minY };
-           newP2 = { x: maxX, y: imgPos.y };
-        }
+        if (activeVertex.index === 0) { newP1 = { x: imgPos.x, y: imgPos.y }; newP2 = { x: maxX, y: maxY }; }
+        else if (activeVertex.index === 1) { newP1 = { x: minX, y: imgPos.y }; newP2 = { x: imgPos.x, y: maxY }; }
+        else if (activeVertex.index === 2) { newP1 = { x: minX, y: minY }; newP2 = { x: imgPos.x, y: imgPos.y }; }
+        else if (activeVertex.index === 3) { newP1 = { x: imgPos.x, y: minY }; newP2 = { x: maxX, y: imgPos.y }; }
 
         const newAnn = { ...ann, points: [newP1, newP2] };
         onAnnotationsChange(annotations.map(a => a.id === selectedId ? newAnn : a));
@@ -526,7 +481,6 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
 
     if (pendingRectStart && currentTool === 'rectangle') {
       const imgPos = currentMouseImagePos || { x: 0, y: 0 };
-      
       if (Math.abs(imgPos.x - pendingRectStart.x) > 1 && Math.abs(imgPos.y - pendingRectStart.y) > 1) {
         const newRect: Annotation = {
           id: Date.now().toString(),
@@ -612,19 +566,18 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                         d={`M ${gridSettings.size} 0 L 0 0 0 ${gridSettings.size}`} 
                         fill="none" 
                         stroke={gridSettings.color} 
-                        vectorEffect="non-scaling-stroke" 
-                        style={{ strokeWidth: "calc(1px / var(--scale))" }}
+                        style={{ vectorEffect: 'non-scaling-stroke', strokeWidth: '1px' }}
                       />
                    </pattern>
                  )}
               </defs>
 
-              {/* === Layer 1: Grid === */}
+              {/* Grid */}
               {gridSettings.visible && (
                  <rect width="100%" height="100%" fill="url(#gridPattern)" />
               )}
 
-              {/* === Layer 2: Annotation Bodies (Completed) === */}
+              {/* Annotations */}
               {annotations.map((ann) => {
                 if (!ann.visible) return null;
                 const isSelected = selectedIds.includes(ann.id);
@@ -633,7 +586,8 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                 const opacity = isSelected ? Math.min(0.8, fillOpacity + 0.3) : isHovered ? Math.min(0.6, fillOpacity + 0.1) : fillOpacity;
                 const strokeColor = ann.locked ? '#fbbf24' : ann.color;
                 
-                const strokeWidth = isSelected || isHovered ? "calc(3px / var(--scale))" : "calc(2px / var(--scale))";
+                // Bold lines for visibility: 6px for selected/hovered, 4px for normal
+                const strokeWidth = isSelected || isHovered ? "6px" : "4px";
 
                 if (ann.type === 'rectangle') {
                   const x = Math.min(ann.points[0].x, ann.points[1].x);
@@ -648,9 +602,8 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                         fill={ann.color}
                         fillOpacity={opacity}
                         stroke={strokeColor}
-                        style={{ strokeWidth }}
-                        vectorEffect="non-scaling-stroke"
-                        strokeDasharray={ann.locked ? "4 2" : "none"} 
+                        strokeDasharray={ann.locked ? "4 2" : "none"}
+                        style={{ strokeWidth, vectorEffect: 'non-scaling-stroke' }}
                       />
                     </g>
                   );
@@ -663,7 +616,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                          fill={ann.color}
                          fillOpacity={opacity}
                          stroke={strokeColor}
-                         style={{ strokeWidth }}
+                         style={{ strokeWidth, vectorEffect: 'non-scaling-stroke' }}
                          strokeLinejoin="round"
                          strokeDasharray={ann.locked ? "4 2" : "none"}
                        />
@@ -672,7 +625,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                 }
               })}
 
-              {/* === Layer 3: Pending Shapes (Drawing) === */}
+              {/* Pending Shapes */}
               {pendingRectStart && currentTool === 'rectangle' && currentMouseImagePos && (
                 <rect
                   x={Math.min(pendingRectStart.x, currentMouseImagePos.x)}
@@ -682,7 +635,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                   fill={currentColor}
                   fillOpacity={0.2}
                   stroke={currentColor}
-                  style={{ strokeWidth: "calc(2px / var(--scale))" }}
+                  style={{ strokeWidth: "4px", vectorEffect: 'non-scaling-stroke' }}
                   strokeDasharray="4"
                 />
               )}
@@ -693,7 +646,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                      points={pendingPoly.map(p => `${p.x},${p.y}`).join(' ')}
                      fill="none"
                      stroke={currentColor}
-                     style={{ strokeWidth: "calc(2px / var(--scale))" }}
+                     style={{ strokeWidth: "4px", vectorEffect: 'non-scaling-stroke' }}
                    />
                    {currentMouseImagePos && (
                      <line
@@ -702,7 +655,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                        x2={currentMouseImagePos.x}
                        y2={currentMouseImagePos.y}
                        stroke={currentColor}
-                       style={{ strokeWidth: "calc(2px / var(--scale))" }}
+                       style={{ strokeWidth: "4px", vectorEffect: 'non-scaling-stroke' }}
                        strokeDasharray="4"
                      />
                    )}
@@ -710,25 +663,23 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                       <circle
                         key={i}
                         cx={p.x} cy={p.y}
-                        r={i === 0 && isHoveringStartPoint ? "calc(8px / var(--scale))" : "calc(4px / var(--scale))"}
+                        r={i === 0 && isHoveringStartPoint ? "8px" : "4px"}
                         fill={i === 0 ? "white" : currentColor}
                         stroke={currentColor}
-                        style={{ strokeWidth: "calc(1px / var(--scale))" }}
+                        style={{ strokeWidth: "3px", vectorEffect: 'non-scaling-stroke' }}
                       />
                    ))}
                 </g>
               )}
 
-              {/* === Layer 4: Interactive Overlays (Handles & Highlights) === */}
+              {/* Interactive Handles */}
               {selectedIds.map((id) => {
                 const ann = annotations.find(a => a.id === id);
                 if (!ann || !ann.visible || ann.locked) return null;
-
-                // Only show handles if single selection to avoid clutter
                 if (selectedIds.length > 1) return null; 
 
                 const strokeColor = ann.color;
-                const handleRadius = "calc(5px / var(--scale))";
+                const handleRadius = "5px";
 
                 if (ann.type === 'rectangle') {
                    const x = Math.min(ann.points[0].x, ann.points[1].x);
@@ -750,7 +701,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                             r={handleRadius} 
                             fill="white"
                             stroke={strokeColor}
-                            style={{ strokeWidth: "calc(1.5px / var(--scale))" }}
+                            style={{ strokeWidth: "2px", vectorEffect: 'non-scaling-stroke' }}
                           />
                         ))}
                      </g>
@@ -765,7 +716,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                              r={handleRadius}
                              fill="white"
                              stroke={strokeColor}
-                             style={{ strokeWidth: "calc(1.5px / var(--scale))" }}
+                             style={{ strokeWidth: "2px", vectorEffect: 'non-scaling-stroke' }}
                           />
                         ))}
                      </g>
@@ -779,12 +730,54 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                   <circle
                     cx={hoveredEdge.point.x}
                     cy={hoveredEdge.point.y}
-                    r="calc(5px / var(--scale))"
+                    r="5px"
                     fill={annotations.find(a => a.id === hoveredEdge?.id)?.color || 'white'}
                     opacity={0.8}
+                    style={{ vectorEffect: 'non-scaling-stroke' }}
                   />
               )}
 
+              {/* Crosshairs - Fixed High Visualization */}
+              {showCrosshairs && currentMouseImagePos && !isDragging && (
+                <g className="pointer-events-none">
+                    {/* Horizontal Background (Contrast) */}
+                    <line
+                        x1={0} y1={currentMouseImagePos.y}
+                        x2={imageSize.width} y2={currentMouseImagePos.y}
+                        stroke="white"
+                        strokeWidth="6"
+                        opacity={0.4}
+                        vectorEffect="non-scaling-stroke"
+                    />
+                    {/* Horizontal Foreground */}
+                    <line
+                        x1={0} y1={currentMouseImagePos.y}
+                        x2={imageSize.width} y2={currentMouseImagePos.y}
+                        stroke="#ff0000"
+                        strokeDasharray="4 2"
+                        strokeWidth="3"
+                        vectorEffect="non-scaling-stroke"
+                    />
+                    {/* Vertical Background (Contrast) */}
+                    <line
+                        x1={currentMouseImagePos.x} y1={0}
+                        x2={currentMouseImagePos.x} y2={imageSize.height}
+                        stroke="white"
+                        strokeWidth="6"
+                        opacity={0.4}
+                        vectorEffect="non-scaling-stroke"
+                    />
+                    {/* Vertical Foreground */}
+                    <line
+                        x1={currentMouseImagePos.x} y1={0}
+                        x2={currentMouseImagePos.x} y2={imageSize.height}
+                        stroke="#ff0000"
+                        strokeDasharray="4 2"
+                        strokeWidth="3"
+                        vectorEffect="non-scaling-stroke"
+                    />
+                </g>
+              )}
             </svg>
         </div>
       </div>
@@ -817,12 +810,6 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
               </div>
             );
           })()}
-        </div>
-      )}
-
-      {showCrosshairs && currentMouseImagePos && !isDragging && (
-        <div className="absolute inset-0 pointer-events-none z-30 opacity-50">
-           {/* Crosshair logic handled by cursor CSS */}
         </div>
       )}
       

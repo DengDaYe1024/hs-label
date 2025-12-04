@@ -47,6 +47,20 @@ export const Toolbar: React.FC<ToolbarProps> = ({
     { id: 'polygon', icon: PenTool, label: `多边形工具 (${formatShortcut(keyMap.TOOL_POLYGON)})` },
   ] as const;
 
+  const renderBadge = (count: number) => {
+    if (count <= 0) return null;
+    const isMultiDigit = count > 9;
+    return (
+      <span 
+        className={`absolute -top-1.5 -right-1.5 bg-blue-600 text-white text-[10px] font-bold h-[18px] flex items-center justify-center rounded-full border-2 border-gray-900 shadow-sm leading-none transition-all ${
+          isMultiDigit ? 'min-w-[22px] px-1' : 'min-w-[18px]'
+        }`}
+      >
+        {isMultiDigit ? '9+' : count}
+      </span>
+    );
+  };
+
   return (
     <div className="w-16 bg-gray-900 border-r border-gray-700 flex flex-col items-center py-4 space-y-4 z-10 shadow-xl">
       <div className="space-y-2 w-full px-2">
@@ -81,11 +95,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           }`}
         >
           <Undo2 size={20} />
-          {undoCount > 0 && (
-            <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] bg-blue-600 text-white text-[10px] font-bold px-1 flex items-center justify-center rounded-full border-2 border-gray-900 shadow-sm leading-none">
-              {undoCount > 9 ? '9+' : undoCount}
-            </span>
-          )}
+          {renderBadge(undoCount)}
         </button>
         <button
           onClick={onRedo}
@@ -98,11 +108,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           }`}
         >
           <Redo2 size={20} />
-          {redoCount > 0 && (
-            <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] bg-gray-600 text-white text-[10px] font-bold px-1 flex items-center justify-center rounded-full border-2 border-gray-900 shadow-sm leading-none">
-              {redoCount > 9 ? '9+' : redoCount}
-            </span>
-          )}
+          {renderBadge(redoCount)}
         </button>
       </div>
 
