@@ -1,3 +1,4 @@
+
 export interface Point {
   x: number;
   y: number;
@@ -12,6 +13,7 @@ export interface Annotation {
   points: Point[];
   color: string;
   visible: boolean;
+  locked: boolean; // New: Prevent accidental edits
 }
 
 export type ToolType = 'select' | 'pan' | 'rectangle' | 'polygon';
@@ -33,6 +35,18 @@ export interface ViewTransform {
   scale: number;
   x: number;
   y: number;
+}
+
+export interface ImageFilters {
+  brightness: number; // %
+  contrast: number;   // %
+  saturation: number; // %
+}
+
+export interface GridSettings {
+  visible: boolean;
+  size: number; // px
+  color: string;
 }
 
 // --- Keyboard Shortcuts ---

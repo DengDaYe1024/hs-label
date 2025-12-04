@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, CSSProperties } from 'react';
-import { Annotation, Point, ToolType, ViewTransform, ImageSize, KeyMap } from '../types';
+import { Annotation, Point, ToolType, ViewTransform, ImageSize, KeyMap, ImageFilters, GridSettings } from '../types';
 import { screenToImage, isPointNearVertex, getDistanceToSegment, imageToScreen, getAnnotationArea } from '../utils/geometry';
 import { getLabelName } from '../constants';
 import { isShortcutPressed } from '../utils/keyboard';
@@ -11,18 +11,20 @@ interface CanvasAreaProps {
   imageSize: ImageSize;
   annotations: Annotation[];
   currentTool: ToolType;
-  selectedId: string | null;
+  selectedIds: string[];
   transform: ViewTransform;
   onTransformChange: (t: ViewTransform) => void;
   onAnnotationsChange: (anns: Annotation[]) => void;
-  onSelect: (id: string | null) => void;
+  onSelect: (ids: string[]) => void;
   currentColor: string;
   fillOpacity: number;
   showCrosshairs: boolean;
   onShapeComplete: (id: string, screenPos: Point) => void;
-  onSnapshot: () => void;
+  onSnapshot: (action: string) => void;
   keyMap: KeyMap;
   padding: { x: number; y: number };
+  imageFilters: ImageFilters;
+  gridSettings: GridSettings;
 }
 
 export const CanvasArea: React.FC<CanvasAreaProps> = ({
@@ -32,7 +34,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
   imageSize,
   annotations,
   currentTool,
-  selectedId,
+  selectedIds,
   transform,
   onTransformChange,
   onAnnotationsChange,
@@ -43,7 +45,9 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
   onShapeComplete,
   onSnapshot,
   keyMap,
-  padding
+  padding,
+  imageFilters,
+  gridSettings
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   
@@ -136,12 +140,10 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).tagName === 'INPUT') return;
 
-      // Special handling for spacebar as it is often held down
       if (e.code === 'Space' && !e.repeat) {
         setIsSpacePressed(true);
       }
 
-      // Drawing Shortcuts
       if (pendingPoly.length > 0) {
         if (isShortcutPressed(e, keyMap.CANCEL)) handleCancelDraw();
         if (isShortcutPressed(e, keyMap.BACKSPACE_POINT)) handleUndoPoint();
@@ -152,8 +154,12 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
         return;
       }
 
-      // Nudge Selected Shape
-      if (selectedId && !activeVertex) {
+      // Nudge selected items
+      if (selectedIds.length > 0 && !activeVertex) {
+        // Don't nudge if any selected item is locked
+        const hasLocked = selectedIds.some(id => annotations.find(a => a.id === id)?.locked);
+        if (hasLocked) return;
+
         let dx = 0, dy = 0;
         
         if (isShortcutPressed(e, keyMap.NUDGE_LEFT)) dx = -1;
@@ -164,15 +170,13 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
         if (dx !== 0 || dy !== 0) {
           e.preventDefault();
           
-          // Multiply by 10 if Shift is held
           const step = e.shiftKey ? 10 : 1;
           dx *= step;
           dy *= step;
 
-          onSnapshot(); // Snapshot before nudge
+          onSnapshot('位置微调'); 
           onAnnotationsChange(annotations.map(ann => {
-            if (ann.id !== selectedId) return ann;
-            // Divide by scale so nudge feels consistent on screen
+            if (!selectedIds.includes(ann.id)) return ann;
             const scaleFactor = 1 / transform.scale; 
             return {
               ...ann,
@@ -186,7 +190,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
         setIsSpacePressed(false);
-        setIsDragging(false); // Stop dragging if space is released
+        setIsDragging(false);
       }
     };
 
@@ -196,13 +200,12 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [selectedId, annotations, activeVertex, pendingPoly, pendingRectStart, onAnnotationsChange, transform.scale, onSnapshot, keyMap]);
+  }, [selectedIds, annotations, activeVertex, pendingPoly, pendingRectStart, onAnnotationsChange, transform.scale, onSnapshot, keyMap]);
 
 
   const handleMouseDown = (e: React.MouseEvent) => {
     const imgPos = getRelativeImagePos(e);
 
-    // 1. Pan Mode (Spacebar or Middle Click or Tool)
     if (currentTool === 'pan' || isSpacePressed || e.button === 1) {
       e.preventDefault();
       setIsDragging(true);
@@ -210,7 +213,6 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
       return;
     }
 
-    // Only Left Click for Drawing/Editing
     if (e.button !== 0) return;
     
     e.stopPropagation();
@@ -218,10 +220,11 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
     // 2. Editing Mode (Select Tool)
     if (currentTool === 'select') {
       
-      // A. Check for Handle/Vertex Clicks
-      if (selectedId) {
+      // A. Check for Handle/Vertex Clicks (Only if exactly one item selected)
+      if (selectedIds.length === 1) {
+        const selectedId = selectedIds[0];
         const ann = annotations.find(a => a.id === selectedId);
-        if (ann) {
+        if (ann && !ann.locked) {
           const threshold = 10 / transform.scale;
           
           if (ann.type === 'rectangle') {
@@ -231,43 +234,40 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
             const y2 = Math.max(ann.points[0].y, ann.points[1].y);
             
             const corners = [
-              { x: x1, y: y1 }, // 0: TL
-              { x: x2, y: y1 }, // 1: TR
-              { x: x2, y: y2 }, // 2: BR
-              { x: x1, y: y2 }  // 3: BL
+              { x: x1, y: y1 }, 
+              { x: x2, y: y1 }, 
+              { x: x2, y: y2 }, 
+              { x: x1, y: y2 } 
             ];
             
             const hitIndex = corners.findIndex(c => isPointNearVertex(c, imgPos, threshold, 1));
             if (hitIndex !== -1) {
-              onSnapshot(); // Snapshot before resize
+              onSnapshot('调整矩形大小');
               setActiveVertex({ id: selectedId, index: hitIndex });
               return;
             }
 
           } else if (ann.type === 'polygon') {
-            // Check existing vertices
             const clickedVertexIndex = ann.points.findIndex(p => 
               isPointNearVertex(p, imgPos, threshold, 1)
             );
             
             if (clickedVertexIndex !== -1) {
-              // Alt+Click to Delete Vertex
               if (e.altKey) {
                 if (ann.points.length > 3) {
-                  onSnapshot();
+                  onSnapshot('删除顶点');
                   const newPoints = ann.points.filter((_, i) => i !== clickedVertexIndex);
                   onAnnotationsChange(annotations.map(a => a.id === selectedId ? { ...a, points: newPoints } : a));
                 }
                 return;
               }
-              onSnapshot();
+              onSnapshot('调整顶点');
               setActiveVertex({ id: selectedId, index: clickedVertexIndex });
               return;
             }
             
-            // Check for Edge Click (Insert Point)
             if (hoveredEdge && hoveredEdge.id === selectedId) {
-               onSnapshot();
+               onSnapshot('添加顶点');
                const newPoints = [...ann.points];
                newPoints.splice(hoveredEdge.index + 1, 0, hoveredEdge.point);
                const newAnn = { ...ann, points: newPoints };
@@ -281,12 +281,13 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
       }
 
       // B. Check for Shape Body Click (Select & Move)
-      // Iterate backwards to hit top-most first
       for (let i = annotations.length - 1; i >= 0; i--) {
         const ann = annotations[i];
         if (!ann.visible) continue;
+        // Don't check for lock here to allow selection (we prevent drag later)
+        // But typical UX is you can't even select locked items directly on canvas
+        if (ann.locked) continue; 
         
-        // Simple BBox hit test
         const xs = ann.points.map(p => p.x);
         const ys = ann.points.map(p => p.y);
         const minX = Math.min(...xs);
@@ -297,30 +298,46 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
         
         if (imgPos.x >= minX - buffer && imgPos.x <= maxX + buffer && 
             imgPos.y >= minY - buffer && imgPos.y <= maxY + buffer) {
-           onSelect(ann.id);
-           onSnapshot();
+           
+           // Multi-selection logic
+           if (e.ctrlKey || e.metaKey) {
+             if (selectedIds.includes(ann.id)) {
+               onSelect(selectedIds.filter(id => id !== ann.id));
+             } else {
+               onSelect([...selectedIds, ann.id]);
+             }
+           } else {
+             if (!selectedIds.includes(ann.id)) {
+                onSelect([ann.id]);
+             }
+             // If already selected and no ctrl key, keep selection (to allow batch drag)
+           }
+
+           onSnapshot('移动标注');
            setDragStart(imgPos);
            setIsDragging(true);
            return;
         }
       }
       
-      onSelect(null);
+      // Clicked on empty space
+      if (!e.shiftKey) { // Shift key might be used for marquee selection (future), for now clear
+         onSelect([]);
+      }
       return;
     }
 
     // 3. Drawing Rectangle
     if (currentTool === 'rectangle') {
-      onSnapshot();
+      onSnapshot('创建矩形');
       setPendingRectStart(imgPos);
       return;
     }
 
     // 4. Drawing Polygon
     if (currentTool === 'polygon') {
-      if (pendingPoly.length === 0) onSnapshot();
+      if (pendingPoly.length === 0) onSnapshot('创建多边形');
 
-      // Close loop if near start
       if (pendingPoly.length >= 3) {
         const startPoint = pendingPoly[0];
         const distToStart = Math.sqrt(
@@ -336,15 +353,14 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
             points: pendingPoly,
             color: currentColor,
             visible: true,
+            locked: false
           };
           onAnnotationsChange([...annotations, newPoly]);
-          onSelect(newPoly.id);
+          onSelect([newPoly.id]);
           setPendingPoly([]);
           
-          // Popup (Adjusted for Padding)
           const centerX = pendingPoly.reduce((sum, p) => sum + p.x, 0) / pendingPoly.length;
           const centerY = pendingPoly.reduce((sum, p) => sum + p.y, 0) / pendingPoly.length;
-          // Add padding back before converting to screen
           const screenPos = imageToScreen(centerX + padding.x, centerY + padding.y, transform);
           onShapeComplete(newPoly.id, screenPos);
           return;
@@ -359,14 +375,12 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
     const pos = getMousePos(e);
     const imgPos = getRelativeImagePos(e);
     
-    // Clamp coordinates for display and drawing
     const clampedPos = {
       x: Math.max(0, Math.min(imgPos.x, imageSize.width)),
       y: Math.max(0, Math.min(imgPos.y, imageSize.height))
     };
     setCurrentMouseImagePos(clampedPos);
 
-    // 1. Hover Logic for Polygon Closing
     if (currentTool === 'polygon' && pendingPoly.length >= 3) {
        const startPoint = pendingPoly[0];
        const dist = Math.sqrt(Math.pow(imgPos.x - startPoint.x, 2) + Math.pow(imgPos.y - startPoint.y, 2));
@@ -375,10 +389,10 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
        setIsHoveringStartPoint(false);
     }
 
-    // 2. Hover Logic for Edge Insertion (Select Tool)
-    if (currentTool === 'select' && selectedId && !activeVertex && !isDragging) {
+    if (currentTool === 'select' && selectedIds.length === 1 && !activeVertex && !isDragging) {
+      const selectedId = selectedIds[0];
       const ann = annotations.find(a => a.id === selectedId);
-      if (ann && ann.type === 'polygon') {
+      if (ann && ann.type === 'polygon' && !ann.locked) {
         const edgeThreshold = 8 / transform.scale;
         let foundEdge = null;
         for (let i = 0; i < ann.points.length; i++) {
@@ -398,14 +412,12 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
       setHoveredEdge(null);
     }
 
-    // 3. Hover Detection for Tooltip (When not dragging/drawing)
     if (!isDragging && !pendingRectStart && pendingPoly.length === 0) {
       let foundId = null;
       for (let i = annotations.length - 1; i >= 0; i--) {
         const ann = annotations[i];
         if (!ann.visible) continue;
         
-        // BBox Check (Reused from selection logic)
         const xs = ann.points.map(p => p.x);
         const ys = ann.points.map(p => p.y);
         const minX = Math.min(...xs);
@@ -431,7 +443,6 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
       setTooltipPos(null);
     }
 
-    // 4. Panning
     if ((currentTool === 'pan' || isSpacePressed || e.button === 1) && isDragging && dragStart) {
        const dx = e.clientX - dragStart.x;
        const dy = e.clientY - dragStart.y;
@@ -444,44 +455,43 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
        return;
     }
 
-    // 5. Dragging Whole Shape
-    if (isDragging && dragStart && selectedId && !activeVertex && currentTool === 'select') {
-      const dx = imgPos.x - dragStart.x; // Delta in image coordinates
+    if (isDragging && dragStart && selectedIds.length > 0 && !activeVertex && currentTool === 'select') {
+      // Check if any selected item is locked
+      const hasLocked = selectedIds.some(id => annotations.find(a => a.id === id)?.locked);
+      if (hasLocked) return;
+
+      const dx = imgPos.x - dragStart.x; 
       const dy = imgPos.y - dragStart.y; 
 
-      // Improved Drag Logic:
       const newAnnotations = annotations.map(ann => {
-        if (ann.id !== selectedId) return ann;
+        if (!selectedIds.includes(ann.id)) return ann;
         return {
           ...ann,
           points: ann.points.map(p => ({ x: p.x + dx, y: p.y + dy }))
         };
       });
       onAnnotationsChange(newAnnotations);
-      setDragStart(imgPos); // Update drag start to current relative image pos
+      setDragStart(imgPos); 
       return;
     }
 
-    // 6. Dragging Vertex / Handle
-    if (activeVertex && selectedId) {
+    if (activeVertex && selectedIds.length === 1) {
+      const selectedId = selectedIds[0];
       const ann = annotations.find(a => a.id === selectedId);
-      if (!ann) return;
+      if (!ann || ann.locked) return;
 
       if (ann.type === 'rectangle') {
-        // Rectangle Resize Logic
         const p1 = ann.points[0];
         const p2 = ann.points[1];
         
         let newP1 = { ...p1 };
         let newP2 = { ...p2 };
         
-        // Calculate current bounds
         const minX = Math.min(p1.x, p2.x);
         const maxX = Math.max(p1.x, p2.x);
         const minY = Math.min(p1.y, p2.y);
         const maxY = Math.max(p1.y, p2.y);
 
-        // activeVertex.index maps to: 0:TL, 1:TR, 2:BR, 3:BL
         if (activeVertex.index === 0) { // TL
            newP1 = { x: imgPos.x, y: imgPos.y };
            newP2 = { x: maxX, y: maxY };
@@ -500,18 +510,12 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
         onAnnotationsChange(annotations.map(a => a.id === selectedId ? newAnn : a));
 
       } else {
-        // Polygon Vertex Move
         const newPoints = [...ann.points];
         newPoints[activeVertex.index] = imgPos;
         const newAnn = { ...ann, points: newPoints };
         onAnnotationsChange(annotations.map(a => a.id === selectedId ? newAnn : a));
       }
       return;
-    }
-
-    // 7. Drawing Rectangle
-    if (pendingRectStart && currentTool === 'rectangle') {
-       // Just visual update handled by render
     }
   };
 
@@ -520,11 +524,9 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
     setDragStart(null);
     setActiveVertex(null);
 
-    // Finish Rectangle
     if (pendingRectStart && currentTool === 'rectangle') {
       const imgPos = currentMouseImagePos || { x: 0, y: 0 };
       
-      // Prevent tiny rectangles
       if (Math.abs(imgPos.x - pendingRectStart.x) > 1 && Math.abs(imgPos.y - pendingRectStart.y) > 1) {
         const newRect: Annotation = {
           id: Date.now().toString(),
@@ -532,15 +534,14 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
           type: 'rectangle',
           points: [pendingRectStart, imgPos],
           color: currentColor,
-          visible: true
+          visible: true,
+          locked: false
         };
         onAnnotationsChange([...annotations, newRect]);
-        onSelect(newRect.id);
+        onSelect([newRect.id]);
         
-        // Popup
         const centerX = (pendingRectStart.x + imgPos.x) / 2;
         const centerY = (pendingRectStart.y + imgPos.y) / 2;
-        // Add padding back before converting to screen
         const screenPos = imageToScreen(centerX + padding.x, centerY + padding.y, transform);
         onShapeComplete(newRect.id, screenPos);
       }
@@ -548,9 +549,6 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
     }
   };
 
-  // --- Render Helpers ---
-  
-  // Dynamic CSS variables for high-performance rendering
   const style = {
     '--scale': transform.scale,
     cursor: isSpacePressed ? 'grab' : 
@@ -570,14 +568,12 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
       onMouseLeave={handleMouseUp}
       style={style}
     >
-      {/* File Name Overlay */}
       {showImageName && fileName && (
         <div className="absolute top-4 left-4 pointer-events-none z-50 bg-black/50 backdrop-blur-sm px-3 py-1.5 rounded text-xs text-white/80 font-mono border border-white/10 shadow-sm">
           {fileName}
         </div>
       )}
 
-      {/* Main Container Layer applying Transform & Padding */}
       <div 
         style={{
           transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
@@ -588,17 +584,17 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
           left: 0,
         }}
       >
-        {/* Padding Wrapper */}
         <div style={{ transform: `translate(${padding.x}px, ${padding.y}px)` }}>
-            {/* 1. Image Layer */}
+            {/* 1. Image Layer with Filters */}
             <img 
               src={imageSrc} 
               alt="Workspace"
-              className="pointer-events-none select-none block shadow-2xl"
+              className="pointer-events-none select-none block shadow-2xl transition-[filter] duration-200"
               style={{
                 width: imageSize.width,
                 height: imageSize.height,
                 maxWidth: 'none',
+                filter: `brightness(${imageFilters.brightness}%) contrast(${imageFilters.contrast}%) saturate(${imageFilters.saturation}%)`
               }}
               draggable={false}
             />
@@ -610,22 +606,34 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
               height={imageSize.height}
             >
               <defs>
-                 {/* Hatch pattern for selected shapes? Maybe later. Solid fill for now. */}
+                 {gridSettings.visible && (
+                   <pattern id="gridPattern" width={gridSettings.size} height={gridSettings.size} patternUnits="userSpaceOnUse">
+                      <path 
+                        d={`M ${gridSettings.size} 0 L 0 0 0 ${gridSettings.size}`} 
+                        fill="none" 
+                        stroke={gridSettings.color} 
+                        vectorEffect="non-scaling-stroke" 
+                        style={{ strokeWidth: "calc(1px / var(--scale))" }}
+                      />
+                   </pattern>
+                 )}
               </defs>
 
-              {/* Render Existing Annotations */}
+              {/* === Layer 1: Grid === */}
+              {gridSettings.visible && (
+                 <rect width="100%" height="100%" fill="url(#gridPattern)" />
+              )}
+
+              {/* === Layer 2: Annotation Bodies (Completed) === */}
               {annotations.map((ann) => {
                 if (!ann.visible) return null;
-                const isSelected = selectedId === ann.id;
+                const isSelected = selectedIds.includes(ann.id);
                 const isHovered = hoveredAnnotationId === ann.id;
                 
-                // Base opacity from props, but increase if selected/hovered
                 const opacity = isSelected ? Math.min(0.8, fillOpacity + 0.3) : isHovered ? Math.min(0.6, fillOpacity + 0.1) : fillOpacity;
-                const strokeColor = ann.color;
+                const strokeColor = ann.locked ? '#fbbf24' : ann.color;
                 
-                // CSS Variable --scale used here for stroke-width
                 const strokeWidth = isSelected || isHovered ? "calc(3px / var(--scale))" : "calc(2px / var(--scale))";
-                const handleRadius = "calc(5px / var(--scale))";
 
                 if (ann.type === 'rectangle') {
                   const x = Math.min(ann.points[0].x, ann.points[1].x);
@@ -634,7 +642,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                   const h = Math.abs(ann.points[0].y - ann.points[1].y);
 
                   return (
-                    <g key={ann.id}>
+                    <g key={ann.id} style={{ opacity: ann.locked ? 0.7 : 1 }}>
                       <rect
                         x={x} y={y} width={w} height={h}
                         fill={ann.color}
@@ -642,34 +650,14 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                         stroke={strokeColor}
                         style={{ strokeWidth }}
                         vectorEffect="non-scaling-stroke"
+                        strokeDasharray={ann.locked ? "4 2" : "none"} 
                       />
-                      {/* Resize Handles (Only when selected) */}
-                      {isSelected && (
-                         <>
-                           {[
-                             { x: x, y: y }, // TL
-                             { x: x + w, y: y }, // TR
-                             { x: x + w, y: y + h }, // BR
-                             { x: x, y: y + h } // BL
-                           ].map((p, i) => (
-                             <circle
-                               key={i}
-                               cx={p.x} cy={p.y}
-                               r={handleRadius} // Radius dynamic in CSS
-                               fill="white"
-                               stroke={strokeColor}
-                               style={{ strokeWidth: "calc(1.5px / var(--scale))" }}
-                             />
-                           ))}
-                         </>
-                      )}
                     </g>
                   );
                 } else {
-                  // Polygon
                   const pointsStr = ann.points.map(p => `${p.x},${p.y}`).join(' ');
                   return (
-                     <g key={ann.id}>
+                     <g key={ann.id} style={{ opacity: ann.locked ? 0.7 : 1 }}>
                        <polygon
                          points={pointsStr}
                          fill={ann.color}
@@ -677,34 +665,14 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                          stroke={strokeColor}
                          style={{ strokeWidth }}
                          strokeLinejoin="round"
+                         strokeDasharray={ann.locked ? "4 2" : "none"}
                        />
-                       {/* Vertices (Only when selected) */}
-                       {isSelected && ann.points.map((p, i) => (
-                          <circle
-                             key={i}
-                             cx={p.x} cy={p.y}
-                             r={handleRadius}
-                             fill="white"
-                             stroke={strokeColor}
-                             style={{ strokeWidth: "calc(1.5px / var(--scale))" }}
-                          />
-                       ))}
-                       {/* Edge Insert Preview */}
-                       {hoveredEdge && hoveredEdge.id === ann.id && (
-                          <circle
-                            cx={hoveredEdge.point.x}
-                            cy={hoveredEdge.point.y}
-                            r={handleRadius}
-                            fill={strokeColor}
-                            opacity={0.8}
-                          />
-                       )}
                      </g>
                   );
                 }
               })}
 
-              {/* Render Pending Rectangle */}
+              {/* === Layer 3: Pending Shapes (Drawing) === */}
               {pendingRectStart && currentTool === 'rectangle' && currentMouseImagePos && (
                 <rect
                   x={Math.min(pendingRectStart.x, currentMouseImagePos.x)}
@@ -719,7 +687,6 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                 />
               )}
 
-              {/* Render Pending Polygon */}
               {pendingPoly.length > 0 && currentTool === 'polygon' && (
                 <g>
                    <polyline
@@ -728,7 +695,6 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                      stroke={currentColor}
                      style={{ strokeWidth: "calc(2px / var(--scale))" }}
                    />
-                   {/* Rubber band line to mouse */}
                    {currentMouseImagePos && (
                      <line
                        x1={pendingPoly[pendingPoly.length - 1].x}
@@ -740,7 +706,6 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                        strokeDasharray="4"
                      />
                    )}
-                   {/* Vertices */}
                    {pendingPoly.map((p, i) => (
                       <circle
                         key={i}
@@ -754,11 +719,76 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
                 </g>
               )}
 
+              {/* === Layer 4: Interactive Overlays (Handles & Highlights) === */}
+              {selectedIds.map((id) => {
+                const ann = annotations.find(a => a.id === id);
+                if (!ann || !ann.visible || ann.locked) return null;
+
+                // Only show handles if single selection to avoid clutter
+                if (selectedIds.length > 1) return null; 
+
+                const strokeColor = ann.color;
+                const handleRadius = "calc(5px / var(--scale))";
+
+                if (ann.type === 'rectangle') {
+                   const x = Math.min(ann.points[0].x, ann.points[1].x);
+                   const y = Math.min(ann.points[0].y, ann.points[1].y);
+                   const w = Math.abs(ann.points[0].x - ann.points[1].x);
+                   const h = Math.abs(ann.points[0].y - ann.points[1].y);
+                   
+                   return (
+                     <g key={id}>
+                        {[
+                          { x: x, y: y }, 
+                          { x: x + w, y: y }, 
+                          { x: x + w, y: y + h }, 
+                          { x: x, y: y + h } 
+                        ].map((p, i) => (
+                          <circle
+                            key={i}
+                            cx={p.x} cy={p.y}
+                            r={handleRadius} 
+                            fill="white"
+                            stroke={strokeColor}
+                            style={{ strokeWidth: "calc(1.5px / var(--scale))" }}
+                          />
+                        ))}
+                     </g>
+                   );
+                } else if (ann.type === 'polygon') {
+                   return (
+                     <g key={id}>
+                        {ann.points.map((p, i) => (
+                          <circle
+                             key={i}
+                             cx={p.x} cy={p.y}
+                             r={handleRadius}
+                             fill="white"
+                             stroke={strokeColor}
+                             style={{ strokeWidth: "calc(1.5px / var(--scale))" }}
+                          />
+                        ))}
+                     </g>
+                   );
+                }
+                return null;
+              })}
+
+              {/* Hovered Edge Indicator */}
+              {hoveredEdge && (
+                  <circle
+                    cx={hoveredEdge.point.x}
+                    cy={hoveredEdge.point.y}
+                    r="calc(5px / var(--scale))"
+                    fill={annotations.find(a => a.id === hoveredEdge?.id)?.color || 'white'}
+                    opacity={0.8}
+                  />
+              )}
+
             </svg>
         </div>
       </div>
       
-      {/* Tooltip for Hovered Annotation */}
       {tooltipPos && hoveredAnnotationId && (
         <div 
           className="fixed z-50 px-2 py-1 bg-gray-900/90 text-white text-xs rounded border border-gray-700 pointer-events-none shadow-xl backdrop-blur-sm whitespace-nowrap"
@@ -775,7 +805,9 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
             const percentage = totalImageArea > 0 ? (area / totalImageArea * 100) : 0;
             return (
               <div className="flex flex-col gap-0.5">
-                <span className="font-bold text-blue-300">{getLabelName(ann.label).split('(')[0]}</span>
+                <span className="font-bold text-blue-300">
+                  {getLabelName(ann.label).split('(')[0]} {ann.locked && '(Locked)'}
+                </span>
                 <span className="text-[10px] text-gray-400 font-mono">
                   {ann.type === 'rectangle' ? 'RECTANGLE' : 'POLYGON'} #{ann.id.slice(-4)}
                 </span>
@@ -788,25 +820,12 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
         </div>
       )}
 
-      {/* Crosshairs */}
       {showCrosshairs && currentMouseImagePos && !isDragging && (
         <div className="absolute inset-0 pointer-events-none z-30 opacity-50">
-           {/* We need to calculate screen positions for the crosshairs based on mouse event, simpler to use fixed lines following mouse if not transformed, 
-               but since we want them to feel 'attached' to the cursor, we just render div lines at the getMousePos coordinates */}
-           {/* Actually, simple fixed position div lines based on mouseMove event are cheapest */}
-           {(() => {
-              // Since we don't store screen mouse pos in state for perf (only relative), we can't render them here easily without lag.
-              // However, we used `currentMouseImagePos`. Let's re-calculate screen pos or store it.
-              // To avoid state thrashing, let's use a pure CSS approach or just rely on the cursor.
-              // The user requested 'Crosshairs', often this implies full screen lines.
-              // Let's assume the standard 'crosshair' cursor is sufficient for now, or if strictly needed, we would need a ref-based tracker.
-              // Given the code structure, I'll stick to the 'crosshair' cursor which is already set in styles.
-              return null;
-           })()}
+           {/* Crosshair logic handled by cursor CSS */}
         </div>
       )}
       
-      {/* Status Bar / Coordinate Display */}
       <div className="absolute bottom-0 left-0 right-0 bg-gray-900/80 backdrop-blur-md border-t border-gray-800 text-gray-400 text-xs px-4 py-1.5 flex justify-between items-center z-40 select-none">
         <div className="flex gap-4 font-mono">
            {currentMouseImagePos ? (
@@ -835,7 +854,7 @@ export const CanvasArea: React.FC<CanvasAreaProps> = ({
           </div>
           <div className="flex items-center gap-1">
              <span className="w-2 h-2 rounded-full bg-gray-500"></span>
-             <span>滚轮: 缩放</span>
+             <span>Ctrl+点击: 多选</span>
           </div>
           <div className="flex items-center gap-1">
              <span className="w-2 h-2 rounded-full bg-gray-500"></span>

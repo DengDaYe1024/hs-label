@@ -14,6 +14,10 @@ interface ToolbarProps {
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  undoCount?: number;
+  redoCount?: number;
+  undoAction?: string | null;
+  redoAction?: string | null;
   keyMap: KeyMap;
   onOpenSettings: () => void;
 }
@@ -29,6 +33,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   canRedo,
   onUndo,
   onRedo,
+  undoCount = 0,
+  redoCount = 0,
+  undoAction,
+  redoAction,
   keyMap,
   onOpenSettings
 }) => {
@@ -65,26 +73,36 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         <button
           onClick={onUndo}
           disabled={!canUndo}
-          title={`撤销 (${formatShortcut(keyMap.UNDO)})`}
-          className={`w-full aspect-square flex items-center justify-center rounded-lg transition-colors ${
+          title={canUndo && undoAction ? `撤销: ${undoAction} (${formatShortcut(keyMap.UNDO)})` : `撤销 (${formatShortcut(keyMap.UNDO)})`}
+          className={`relative w-full aspect-square flex items-center justify-center rounded-lg transition-colors ${
             canUndo
               ? 'text-gray-400 hover:bg-gray-800 hover:text-white'
               : 'text-gray-700 cursor-not-allowed'
           }`}
         >
           <Undo2 size={20} />
+          {undoCount > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] bg-blue-600 text-white text-[10px] font-bold px-1 flex items-center justify-center rounded-full border-2 border-gray-900 shadow-sm leading-none">
+              {undoCount > 9 ? '9+' : undoCount}
+            </span>
+          )}
         </button>
         <button
           onClick={onRedo}
           disabled={!canRedo}
-          title={`重做 (${formatShortcut(keyMap.REDO)})`}
-          className={`w-full aspect-square flex items-center justify-center rounded-lg transition-colors ${
+          title={canRedo && redoAction ? `重做: ${redoAction} (${formatShortcut(keyMap.REDO)})` : `重做 (${formatShortcut(keyMap.REDO)})`}
+          className={`relative w-full aspect-square flex items-center justify-center rounded-lg transition-colors ${
             canRedo
               ? 'text-gray-400 hover:bg-gray-800 hover:text-white'
               : 'text-gray-700 cursor-not-allowed'
           }`}
         >
           <Redo2 size={20} />
+          {redoCount > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] bg-gray-600 text-white text-[10px] font-bold px-1 flex items-center justify-center rounded-full border-2 border-gray-900 shadow-sm leading-none">
+              {redoCount > 9 ? '9+' : redoCount}
+            </span>
+          )}
         </button>
       </div>
 

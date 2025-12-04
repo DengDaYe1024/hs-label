@@ -78,3 +78,47 @@ export const getAnnotationArea = (annotation: Annotation): number => {
   }
   return 0;
 };
+
+// --- New Helpers for Alignment ---
+
+export interface BoundingBox {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  width: number;
+  height: number;
+  centerX: number;
+  centerY: number;
+}
+
+export const getPointsBounds = (points: Point[]): BoundingBox => {
+  const xs = points.map(p => p.x);
+  const ys = points.map(p => p.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  
+  return {
+    minX,
+    maxX,
+    minY,
+    maxY,
+    width: maxX - minX,
+    height: maxY - minY,
+    centerX: (minX + maxX) / 2,
+    centerY: (minY + maxY) / 2
+  };
+};
+
+export const getAnnotationBounds = (ann: Annotation): BoundingBox => {
+  return getPointsBounds(ann.points);
+};
+
+export const moveAnnotation = (ann: Annotation, dx: number, dy: number): Annotation => {
+  return {
+    ...ann,
+    points: ann.points.map(p => ({ x: p.x + dx, y: p.y + dy }))
+  };
+};
